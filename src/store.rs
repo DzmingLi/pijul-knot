@@ -47,6 +47,14 @@ pub struct ChannelDiffResult {
     pub only_in_b: Vec<String>,
 }
 
+/// Info about a single pijul change.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ChangeInfo {
+    pub hash: String,
+    pub message: String,
+    pub author: Option<String>,
+}
+
 /// Wrapper around pijul-core for managing article repositories.
 ///
 /// Each article gets its own pijul repo under `base_path/node_id/`.
@@ -368,6 +376,37 @@ impl PijulStore {
             hashes.push(h.to_base32());
         }
         Ok(hashes)
+    }
+
+    /// Get details of a specific change (message, author).
+    pub fn get_change_info(&self, node_id: &str, change_hash: &str) -> anyhow::Result<ChangeInfo> {
+        let hash = pijul_core::Hash::from_base32(change_hash.as_bytes())
+            .ok_or_else(|| anyhow::anyhow!("Invalid hash: {change_hash}"))?;
+        let path = self.repo_path(node_id);
+        let repo = self.open_repo(&path)?;
+        let change = repo.changes.get_change(&hash)?;
+
+        let message = change.hashed.header.message.clone();
+        let author = change.unhashed.as_ref()
+            .and_then(|u| u.get("identity"))
+            .and_then(|i| i.get("did"))
+            .and_then(|d| d.as_str())
+            .map(|s| s.to_string());
+
+        Ok(ChangeInfo { hash: change_hash.to_string(), message, author })
+    }
+
+    /// Get the log with change details (message, author) for each entry.
+    pub fn log_with_details(&self, node_id: &str, channel_name: &str) -> anyhow::Result<Vec<ChangeInfo>> {
+        let hashes = self.log_channel(node_id, channel_name)?;
+        let mut infos = Vec::new();
+        for h in &hashes {
+            match self.get_change_info(node_id, h) {
+                Ok(info) => infos.push(info),
+                Err(_) => infos.push(ChangeInfo { hash: h.clone(), message: String::new(), author: None }),
+            }
+        }
+        Ok(infos)
     }
 
     /// Show what changed between the working copy and the last recorded state.

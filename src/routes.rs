@@ -18,6 +18,7 @@ pub fn router(state: KnotState) -> Router {
         // Versioning
         .route("/repos/{node_id}/record", post(record))
         .route("/repos/{node_id}/log", get(log))
+        .route("/repos/{node_id}/log-details", get(log_details))
         .route("/repos/{node_id}/unrecord", post(unrecord))
         .route("/repos/{node_id}/revert", post(revert))
         .route("/repos/{node_id}/diff", get(diff))
@@ -132,6 +133,13 @@ async fn log(State(state): State<KnotState>, Path(node_id): Path<String>, Query(
         }
     }).await.map_err(|e| anyhow::anyhow!(e))??;
     Ok(Json(hashes))
+}
+
+async fn log_details(State(state): State<KnotState>, Path(node_id): Path<String>, Query(q): Query<ChannelQuery>) -> R<Json<Vec<crate::ChangeInfo>>> {
+    let pijul = state.pijul.clone();
+    let ch = q.channel.unwrap_or_else(|| "main".to_string());
+    let infos = tokio::task::spawn_blocking(move || pijul.log_with_details(&node_id, &ch)).await.map_err(|e| anyhow::anyhow!(e))??;
+    Ok(Json(infos))
 }
 
 #[derive(serde::Deserialize)]

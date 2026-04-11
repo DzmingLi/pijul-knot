@@ -20,7 +20,7 @@ pub mod store;
 pub mod client;
 mod routes;
 
-pub use store::{PijulStore, ChannelDiffResult, DiffHunk, DiffResult, TrackedFile};
+pub use store::{PijulStore, ChangeInfo, ChannelDiffResult, DiffHunk, DiffResult, TrackedFile};
 pub use client::KnotClient;
 pub use routes::router;
 
