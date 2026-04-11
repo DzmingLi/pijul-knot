@@ -706,22 +706,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fx-pijul"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dashmap",
- "pijul-at-config",
- "pijul-at-core",
- "pijul-at-repository",
- "rand 0.10.1",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
 name = "generic-array"
 version = "0.14.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1359,9 +1343,14 @@ dependencies = [
  "anyhow",
  "axum",
  "clap",
- "fx-pijul",
+ "dashmap",
+ "pijul-at-config",
+ "pijul-at-core",
+ "pijul-at-repository",
+ "rand 0.10.1",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tower-http",
  "tracing",

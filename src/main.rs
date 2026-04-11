@@ -1,5 +1,3 @@
-mod routes;
-
 use std::sync::Arc;
 use clap::Parser;
 use tower_http::cors::CorsLayer;
@@ -12,20 +10,16 @@ struct Args {
     data_dir: String,
 }
 
-#[derive(Clone)]
-pub struct AppState {
-    pub pijul: Arc<fx_pijul::PijulStore>,
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_env_filter("info,pijul_knot=debug").init();
     let args = Args::parse();
 
-    let pijul = Arc::new(fx_pijul::PijulStore::new(&args.data_dir));
-    let state = AppState { pijul };
+    let state = pijul_knot::KnotState {
+        pijul: Arc::new(pijul_knot::PijulStore::new(&args.data_dir)),
+    };
 
-    let app = routes::router(state).layer(CorsLayer::permissive());
+    let app = pijul_knot::router(state).layer(CorsLayer::permissive());
 
     let addr = format!("0.0.0.0:{}", args.port);
     tracing::info!("pijul-knot listening on {addr}");

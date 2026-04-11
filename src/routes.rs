@@ -6,9 +6,9 @@ use axum::{
     Json,
     response::IntoResponse,
 };
-use crate::AppState;
+use crate::KnotState;
 
-pub fn router(state: AppState) -> Router {
+pub fn router(state: KnotState) -> Router {
     Router::new()
         // Repo lifecycle
         .route("/repos", post(init_repo))
@@ -54,7 +54,7 @@ impl IntoResponse for AppError {
 #[derive(serde::Deserialize)]
 struct InitRepoInput { node_id: String, series: Option<bool> }
 
-async fn init_repo(State(state): State<AppState>, Json(input): Json<InitRepoInput>) -> R<(StatusCode, Json<serde_json::Value>)> {
+async fn init_repo(State(state): State<KnotState>, Json(input): Json<InitRepoInput>) -> R<(StatusCode, Json<serde_json::Value>)> {
     let pijul = state.pijul.clone();
     let node_id = input.node_id.clone();
     let is_series = input.series.unwrap_or(false);
@@ -64,13 +64,13 @@ async fn init_repo(State(state): State<AppState>, Json(input): Json<InitRepoInpu
     Ok((StatusCode::CREATED, Json(serde_json::json!({ "node_id": input.node_id }))))
 }
 
-async fn init_series_repo(State(state): State<AppState>, Path(node_id): Path<String>) -> R<StatusCode> {
+async fn init_series_repo(State(state): State<KnotState>, Path(node_id): Path<String>) -> R<StatusCode> {
     let pijul = state.pijul.clone();
     tokio::task::spawn_blocking(move || pijul.init_series_repo(&node_id)).await.map_err(|e| anyhow::anyhow!(e))??;
     Ok(StatusCode::CREATED)
 }
 
-async fn list_files(State(state): State<AppState>, Path(node_id): Path<String>) -> R<Json<Vec<serde_json::Value>>> {
+async fn list_files(State(state): State<KnotState>, Path(node_id): Path<String>) -> R<Json<Vec<serde_json::Value>>> {
     let pijul = state.pijul.clone();
     let files = tokio::task::spawn_blocking(move || pijul.list_files(&node_id)).await.map_err(|e| anyhow::anyhow!(e))??;
     let out: Vec<_> = files.iter().map(|f| serde_json::json!({ "path": f.path, "is_dir": f.is_dir })).collect();
@@ -82,7 +82,7 @@ async fn list_files(State(state): State<AppState>, Path(node_id): Path<String>) 
 #[derive(serde::Deserialize)]
 struct FileQuery { path: String }
 
-async fn read_file(State(state): State<AppState>, Path(node_id): Path<String>, Query(q): Query<FileQuery>) -> R<Json<serde_json::Value>> {
+async fn read_file(State(state): State<KnotState>, Path(node_id): Path<String>, Query(q): Query<FileQuery>) -> R<Json<serde_json::Value>> {
     let pijul = state.pijul.clone();
     let path = q.path;
     let content = tokio::task::spawn_blocking(move || pijul.get_file_content(&node_id, &path)).await.map_err(|e| anyhow::anyhow!(e))??;
@@ -93,7 +93,7 @@ async fn read_file(State(state): State<AppState>, Path(node_id): Path<String>, Q
 #[derive(serde::Deserialize)]
 struct WriteFileInput { path: String, content: String }
 
-async fn write_file(State(state): State<AppState>, Path(node_id): Path<String>, Json(input): Json<WriteFileInput>) -> R<StatusCode> {
+async fn write_file(State(state): State<KnotState>, Path(node_id): Path<String>, Json(input): Json<WriteFileInput>) -> R<StatusCode> {
     let pijul = state.pijul.clone();
     tokio::task::spawn_blocking(move || {
         let repo = pijul.repo_path(&node_id);
@@ -110,7 +110,7 @@ async fn write_file(State(state): State<AppState>, Path(node_id): Path<String>, 
 #[derive(serde::Deserialize)]
 struct RecordInput { message: String, author_did: Option<String> }
 
-async fn record(State(state): State<AppState>, Path(node_id): Path<String>, Json(input): Json<RecordInput>) -> R<Json<serde_json::Value>> {
+async fn record(State(state): State<KnotState>, Path(node_id): Path<String>, Json(input): Json<RecordInput>) -> R<Json<serde_json::Value>> {
     let pijul = state.pijul.clone();
     let result = tokio::task::spawn_blocking(move || {
         pijul.record(&node_id, &input.message, input.author_did.as_deref())
@@ -122,7 +122,7 @@ async fn record(State(state): State<AppState>, Path(node_id): Path<String>, Json
 #[derive(serde::Deserialize)]
 struct ChannelQuery { channel: Option<String> }
 
-async fn log(State(state): State<AppState>, Path(node_id): Path<String>, Query(q): Query<ChannelQuery>) -> R<Json<Vec<String>>> {
+async fn log(State(state): State<KnotState>, Path(node_id): Path<String>, Query(q): Query<ChannelQuery>) -> R<Json<Vec<String>>> {
     let pijul = state.pijul.clone();
     let ch = q.channel;
     let hashes = tokio::task::spawn_blocking(move || {
@@ -137,19 +137,19 @@ async fn log(State(state): State<AppState>, Path(node_id): Path<String>, Query(q
 #[derive(serde::Deserialize)]
 struct UnrecordInput { change_hash: String }
 
-async fn unrecord(State(state): State<AppState>, Path(node_id): Path<String>, Json(input): Json<UnrecordInput>) -> R<StatusCode> {
+async fn unrecord(State(state): State<KnotState>, Path(node_id): Path<String>, Json(input): Json<UnrecordInput>) -> R<StatusCode> {
     let pijul = state.pijul.clone();
     tokio::task::spawn_blocking(move || pijul.unrecord_change(&node_id, &input.change_hash)).await.map_err(|e| anyhow::anyhow!(e))??;
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn revert(State(state): State<AppState>, Path(node_id): Path<String>) -> R<StatusCode> {
+async fn revert(State(state): State<KnotState>, Path(node_id): Path<String>) -> R<StatusCode> {
     let pijul = state.pijul.clone();
     tokio::task::spawn_blocking(move || pijul.revert(&node_id)).await.map_err(|e| anyhow::anyhow!(e))??;
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn diff(State(state): State<AppState>, Path(node_id): Path<String>) -> R<Json<fx_pijul::DiffResult>> {
+async fn diff(State(state): State<KnotState>, Path(node_id): Path<String>) -> R<Json<crate::DiffResult>> {
     let pijul = state.pijul.clone();
     let result = tokio::task::spawn_blocking(move || pijul.diff(&node_id)).await.map_err(|e| anyhow::anyhow!(e))??;
     Ok(Json(result))
@@ -160,7 +160,7 @@ async fn diff(State(state): State<AppState>, Path(node_id): Path<String>) -> R<J
 #[derive(serde::Deserialize)]
 struct ForkInput { fork_node_id: String }
 
-async fn fork_repo(State(state): State<AppState>, Path(node_id): Path<String>, Json(input): Json<ForkInput>) -> R<(StatusCode, Json<serde_json::Value>)> {
+async fn fork_repo(State(state): State<KnotState>, Path(node_id): Path<String>, Json(input): Json<ForkInput>) -> R<(StatusCode, Json<serde_json::Value>)> {
     let pijul = state.pijul.clone();
     let fork_id = input.fork_node_id.clone();
     tokio::task::spawn_blocking(move || pijul.fork(&node_id, &input.fork_node_id)).await.map_err(|e| anyhow::anyhow!(e))??;
@@ -170,7 +170,7 @@ async fn fork_repo(State(state): State<AppState>, Path(node_id): Path<String>, J
 #[derive(serde::Deserialize)]
 struct ApplyInput { source_node_id: String, change_hash: String }
 
-async fn apply_cross_repo(State(state): State<AppState>, Path(node_id): Path<String>, Json(input): Json<ApplyInput>) -> R<StatusCode> {
+async fn apply_cross_repo(State(state): State<KnotState>, Path(node_id): Path<String>, Json(input): Json<ApplyInput>) -> R<StatusCode> {
     let pijul = state.pijul.clone();
     tokio::task::spawn_blocking(move || pijul.apply(&input.source_node_id, &node_id, &input.change_hash)).await.map_err(|e| anyhow::anyhow!(e))??;
     Ok(StatusCode::NO_CONTENT)
@@ -179,7 +179,7 @@ async fn apply_cross_repo(State(state): State<AppState>, Path(node_id): Path<Str
 #[derive(serde::Deserialize)]
 struct DiffReposQuery { target: String }
 
-async fn diff_repos(State(state): State<AppState>, Path(node_id): Path<String>, Query(q): Query<DiffReposQuery>) -> R<Json<Vec<String>>> {
+async fn diff_repos(State(state): State<KnotState>, Path(node_id): Path<String>, Query(q): Query<DiffReposQuery>) -> R<Json<Vec<String>>> {
     let pijul = state.pijul.clone();
     let ahead = tokio::task::spawn_blocking(move || pijul.diff_repos(&node_id, &q.target)).await.map_err(|e| anyhow::anyhow!(e))??;
     Ok(Json(ahead))
@@ -187,7 +187,7 @@ async fn diff_repos(State(state): State<AppState>, Path(node_id): Path<String>, 
 
 // ---- Channels ----
 
-async fn list_channels(State(state): State<AppState>, Path(node_id): Path<String>) -> R<Json<Vec<String>>> {
+async fn list_channels(State(state): State<KnotState>, Path(node_id): Path<String>) -> R<Json<Vec<String>>> {
     let pijul = state.pijul.clone();
     let chs = tokio::task::spawn_blocking(move || pijul.list_channels(&node_id)).await.map_err(|e| anyhow::anyhow!(e))??;
     Ok(Json(chs))
@@ -196,19 +196,19 @@ async fn list_channels(State(state): State<AppState>, Path(node_id): Path<String
 #[derive(serde::Deserialize)]
 struct CreateChannelInput { name: String, fork_from: Option<String> }
 
-async fn create_channel(State(state): State<AppState>, Path(node_id): Path<String>, Json(input): Json<CreateChannelInput>) -> R<StatusCode> {
+async fn create_channel(State(state): State<KnotState>, Path(node_id): Path<String>, Json(input): Json<CreateChannelInput>) -> R<StatusCode> {
     let pijul = state.pijul.clone();
     tokio::task::spawn_blocking(move || pijul.create_channel(&node_id, &input.name, input.fork_from.as_deref())).await.map_err(|e| anyhow::anyhow!(e))??;
     Ok(StatusCode::CREATED)
 }
 
-async fn delete_channel(State(state): State<AppState>, Path((node_id, name)): Path<(String, String)>) -> R<StatusCode> {
+async fn delete_channel(State(state): State<KnotState>, Path((node_id, name)): Path<(String, String)>) -> R<StatusCode> {
     let pijul = state.pijul.clone();
     tokio::task::spawn_blocking(move || pijul.delete_channel(&node_id, &name)).await.map_err(|e| anyhow::anyhow!(e))??;
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn read_channel_file(State(state): State<AppState>, Path((node_id, ch)): Path<(String, String)>, Query(q): Query<FileQuery>) -> R<Json<serde_json::Value>> {
+async fn read_channel_file(State(state): State<KnotState>, Path((node_id, ch)): Path<(String, String)>, Query(q): Query<FileQuery>) -> R<Json<serde_json::Value>> {
     let pijul = state.pijul.clone();
     let path = q.path;
     let content = tokio::task::spawn_blocking(move || pijul.read_file_from_channel(&node_id, &ch, &path)).await.map_err(|e| anyhow::anyhow!(e))??;
@@ -220,7 +220,7 @@ async fn read_channel_file(State(state): State<AppState>, Path((node_id, ch)): P
 struct WriteChannelFileInput { path: String, content: String, message: Option<String>, author_did: Option<String> }
 
 async fn write_channel_file(
-    State(state): State<AppState>, Path((node_id, ch)): Path<(String, String)>, Json(input): Json<WriteChannelFileInput>,
+    State(state): State<KnotState>, Path((node_id, ch)): Path<(String, String)>, Json(input): Json<WriteChannelFileInput>,
 ) -> R<Json<serde_json::Value>> {
     let pijul = state.pijul.clone();
     let result = tokio::task::spawn_blocking(move || {
@@ -231,7 +231,7 @@ async fn write_channel_file(
     Ok(Json(serde_json::json!({ "change_hash": hash, "merkle": merkle })))
 }
 
-async fn channel_log(State(state): State<AppState>, Path((node_id, ch)): Path<(String, String)>) -> R<Json<Vec<String>>> {
+async fn channel_log(State(state): State<KnotState>, Path((node_id, ch)): Path<(String, String)>) -> R<Json<Vec<String>>> {
     let pijul = state.pijul.clone();
     let hashes = tokio::task::spawn_blocking(move || pijul.log_channel(&node_id, &ch)).await.map_err(|e| anyhow::anyhow!(e))??;
     Ok(Json(hashes))
@@ -240,7 +240,7 @@ async fn channel_log(State(state): State<AppState>, Path((node_id, ch)): Path<(S
 #[derive(serde::Deserialize)]
 struct ApplyToChannelInput { change_hash: String }
 
-async fn apply_to_channel(State(state): State<AppState>, Path((node_id, ch)): Path<(String, String)>, Json(input): Json<ApplyToChannelInput>) -> R<StatusCode> {
+async fn apply_to_channel(State(state): State<KnotState>, Path((node_id, ch)): Path<(String, String)>, Json(input): Json<ApplyToChannelInput>) -> R<StatusCode> {
     let pijul = state.pijul.clone();
     tokio::task::spawn_blocking(move || pijul.apply_change_to_channel(&node_id, &input.change_hash, &ch)).await.map_err(|e| anyhow::anyhow!(e))??;
     Ok(StatusCode::NO_CONTENT)
@@ -249,7 +249,7 @@ async fn apply_to_channel(State(state): State<AppState>, Path((node_id, ch)): Pa
 #[derive(serde::Deserialize)]
 struct ChannelDiffQuery { a: String, b: String }
 
-async fn channel_diff(State(state): State<AppState>, Path(node_id): Path<String>, Query(q): Query<ChannelDiffQuery>) -> R<Json<fx_pijul::ChannelDiffResult>> {
+async fn channel_diff(State(state): State<KnotState>, Path(node_id): Path<String>, Query(q): Query<ChannelDiffQuery>) -> R<Json<crate::ChannelDiffResult>> {
     let pijul = state.pijul.clone();
     let result = tokio::task::spawn_blocking(move || pijul.diff_channels(&node_id, &q.a, &q.b)).await.map_err(|e| anyhow::anyhow!(e))??;
     Ok(Json(result))
