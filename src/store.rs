@@ -1047,6 +1047,159 @@ impl PijulStore {
         self.repo_path(series_node_id)
     }
 
+    // --- Push / Pull (Tangled knot HTTP protocol) ---
+
+    /// Push local changes to a remote knot.
+    ///
+    /// `remote_url` is the pijul remote URL, e.g.
+    /// `https://knot.example.com/did:plc:xxx/my-repo`
+    ///
+    /// Protocol: get remote changelist, find local changes not on remote,
+    /// POST each change file to `{remote_url}/.pijul?apply={hash}&to_channel={channel}`.
+    pub fn push(
+        &self,
+        node_id: &str,
+        remote_url: &str,
+        channel: Option<&str>,
+        auth_token: Option<&str>,
+    ) -> anyhow::Result<Vec<String>> {
+        let ch = channel.unwrap_or("main");
+        let pijul_url = format!("{}/.pijul", remote_url.trim_end_matches('/'));
+
+        // Get remote changelist
+        let remote_hashes = self.fetch_remote_changelist(&pijul_url, ch)?;
+        let remote_set: std::collections::HashSet<&str> = remote_hashes.iter().map(|s| s.as_str()).collect();
+
+        // Get local log
+        let local_hashes = self.log_channel(node_id, ch)?;
+
+        // Find changes to push (local but not remote)
+        let to_push: Vec<&str> = local_hashes.iter()
+            .filter(|h| !remote_set.contains(h.as_str()))
+            .map(|s| s.as_str())
+            .collect();
+
+        if to_push.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Push each change
+        let path = self.repo_path(node_id);
+        let repo = self.open_repo(&path)?;
+        let mut pushed = Vec::new();
+
+        for hash_str in &to_push {
+            let hash = pijul_core::Hash::from_base32(hash_str.as_bytes())
+                .ok_or_else(|| anyhow::anyhow!("Invalid hash: {hash_str}"))?;
+            let change_path = repo.changes.filename(&hash);
+
+            if !change_path.exists() {
+                tracing::warn!("change file not found: {}", change_path.display());
+                continue;
+            }
+
+            let change_bytes = std::fs::read(&change_path)?;
+            let apply_url = format!("{pijul_url}?apply={hash_str}&to_channel={ch}");
+
+            let mut req = ureq::post(&apply_url)
+                .header("Content-Type", "application/octet-stream");
+            if let Some(token) = auth_token {
+                req = req.header("Authorization", &format!("Bearer {token}"));
+            }
+
+            req.send(&change_bytes[..])
+                .map_err(|e| anyhow::anyhow!("push change {hash_str}: {e}"))?;
+
+            pushed.push(hash_str.to_string());
+        }
+
+        tracing::info!("pushed {} changes to {remote_url}", pushed.len());
+        Ok(pushed)
+    }
+
+    /// Pull remote changes from a knot into local repo.
+    ///
+    /// Fetches changelist, downloads missing changes, applies them locally.
+    pub fn pull(
+        &self,
+        node_id: &str,
+        remote_url: &str,
+        channel: Option<&str>,
+    ) -> anyhow::Result<Vec<String>> {
+        let ch = channel.unwrap_or("main");
+        let pijul_url = format!("{}/.pijul", remote_url.trim_end_matches('/'));
+
+        // Get remote changelist
+        let remote_hashes = self.fetch_remote_changelist(&pijul_url, ch)?;
+
+        // Get local log
+        let local_hashes = self.log_channel(node_id, ch)?;
+        let local_set: std::collections::HashSet<&str> = local_hashes.iter().map(|s| s.as_str()).collect();
+
+        // Find changes to pull (remote but not local)
+        let to_pull: Vec<&str> = remote_hashes.iter()
+            .filter(|h| !local_set.contains(h.as_str()))
+            .map(|s| s.as_str())
+            .collect();
+
+        if to_pull.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let path = self.repo_path(node_id);
+        let mut pulled = Vec::new();
+
+        for hash_str in &to_pull {
+            // Download change file
+            let change_url = format!("{pijul_url}?change={hash_str}");
+            let resp = ureq::get(&change_url).call()
+                .map_err(|e| anyhow::anyhow!("fetch change {hash_str}: {e}"))?;
+
+            let change_bytes = resp.into_body().read_to_vec()
+                .map_err(|e| anyhow::anyhow!("read change body: {e}"))?;
+
+            // Save to local change store
+            let hash = pijul_core::Hash::from_base32(hash_str.as_bytes())
+                .ok_or_else(|| anyhow::anyhow!("Invalid hash: {hash_str}"))?;
+            let repo = self.open_repo(&path)?;
+            let change_file = repo.changes.filename(&hash);
+            if let Some(parent) = change_file.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            if !change_file.exists() {
+                std::fs::write(&change_file, &change_bytes)?;
+            }
+            drop(repo);
+
+            // Apply to channel
+            self.apply_change_to_channel(node_id, hash_str, ch)?;
+            pulled.push(hash_str.to_string());
+        }
+
+        tracing::info!("pulled {} changes from {remote_url}", pulled.len());
+        Ok(pulled)
+    }
+
+    /// Fetch the changelist from a remote knot (Tangled HTTP protocol).
+    fn fetch_remote_changelist(&self, pijul_url: &str, channel: &str) -> anyhow::Result<Vec<String>> {
+        let url = format!("{pijul_url}?changelist=0&channel={channel}");
+        let resp = ureq::get(&url).call()
+            .map_err(|e| anyhow::anyhow!("fetch changelist: {e}"))?;
+        let body = resp.into_body().read_to_string()
+            .map_err(|e| anyhow::anyhow!("read changelist: {}", e))?;
+
+        // Format: "{pos}.{hash}.{state}\n" per line, terminated by empty line
+        let hashes: Vec<String> = body.lines()
+            .filter(|line| !line.is_empty())
+            .filter_map(|line| {
+                let parts: Vec<&str> = line.splitn(3, '.').collect();
+                if parts.len() >= 2 { Some(parts[1].to_string()) } else { None }
+            })
+            .collect();
+
+        Ok(hashes)
+    }
+
     fn open_repo(&self, path: &Path) -> anyhow::Result<RepoHandle> {
         let dot_dir = path.join(pijul_core::DOT_DIR);
         let pristine_dir = dot_dir.join("pristine");

@@ -43,6 +43,9 @@ clap = { version = "4", features = ["derive", "env"] }
 # HTTP client (for KnotClient)
 reqwest = { version = "0.12", features = ["json"] }
 
+# HTTP (sync, for push/pull in PijulStore)
+ureq = "3"
+
 # Misc
 rand = "0.10"
 urlencoding = "2"
