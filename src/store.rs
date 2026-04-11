@@ -55,6 +55,22 @@ pub struct ChangeInfo {
     pub author: Option<String>,
 }
 
+/// A content line within a change (addition or deletion).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ChangeLine {
+    pub kind: String, // "add" or "del"
+    pub content: String,
+}
+
+/// Full details of a change including content hunks.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ChangeDetail {
+    pub hash: String,
+    pub message: String,
+    pub author: Option<String>,
+    pub lines: Vec<ChangeLine>,
+}
+
 /// Wrapper around pijul-core for managing article repositories.
 ///
 /// Each article gets its own pijul repo under `base_path/node_id/`.
@@ -407,6 +423,80 @@ impl PijulStore {
             }
         }
         Ok(infos)
+    }
+
+    /// Get full details of a change including its content lines (additions/deletions).
+    pub fn get_change_detail(&self, node_id: &str, change_hash: &str) -> anyhow::Result<ChangeDetail> {
+        let hash = pijul_core::Hash::from_base32(change_hash.as_bytes())
+            .ok_or_else(|| anyhow::anyhow!("Invalid hash: {change_hash}"))?;
+        let path = self.repo_path(node_id);
+        let repo = self.open_repo(&path)?;
+        let change = repo.changes.get_change(&hash)?;
+
+        let message = change.hashed.header.message.clone();
+        let author = change.unhashed.as_ref()
+            .and_then(|u| u.get("identity"))
+            .and_then(|i| i.get("did"))
+            .and_then(|d| d.as_str())
+            .map(|s| s.to_string());
+
+        let contents = &change.contents;
+        let mut lines = Vec::new();
+
+        // Extract content from each hunk's atoms
+        for hunk in &change.hashed.changes {
+            self.extract_hunk_lines(hunk, contents, &mut lines);
+        }
+
+        Ok(ChangeDetail { hash: change_hash.to_string(), message, author, lines })
+    }
+
+    /// Extract added/deleted lines from a hunk.
+    fn extract_hunk_lines(&self, hunk: &pijul_core::change::Hunk<Option<pijul_core::Hash>, pijul_core::change::Local>, contents: &[u8], lines: &mut Vec<ChangeLine>) {
+        use pijul_core::change::{Hunk, Atom};
+
+        match hunk {
+            Hunk::FileAdd { contents: Some(atom), .. } |
+            Hunk::Edit { change: atom, .. } |
+            Hunk::FileUndel { contents: Some(atom), .. } => {
+                if let Atom::NewVertex(nv) = atom {
+                    let start: usize = nv.start.0.into();
+                    let end: usize = nv.end.0.into();
+                    if end > start && end <= contents.len() {
+                        let text = String::from_utf8_lossy(&contents[start..end]);
+                        for line in text.lines() {
+                            if !line.is_empty() {
+                                lines.push(ChangeLine { kind: "add".into(), content: line.to_string() });
+                            }
+                        }
+                    }
+                }
+            }
+            Hunk::Replacement { change, replacement, .. } => {
+                // Deletions from change (EdgeMap = delete edges)
+                if let Atom::EdgeMap(_) = change {
+                    // EdgeMap represents deletions but content isn't easily extractable
+                    // We'd need the pristine state to know what was deleted
+                }
+                // Additions from replacement
+                if let Atom::NewVertex(nv) = replacement {
+                    let start: usize = nv.start.0.into();
+                    let end: usize = nv.end.0.into();
+                    if end > start && end <= contents.len() {
+                        let text = String::from_utf8_lossy(&contents[start..end]);
+                        for line in text.lines() {
+                            if !line.is_empty() {
+                                lines.push(ChangeLine { kind: "add".into(), content: line.to_string() });
+                            }
+                        }
+                    }
+                }
+            }
+            Hunk::FileDel { path, .. } => {
+                lines.push(ChangeLine { kind: "del".into(), content: format!("(deleted file: {path})") });
+            }
+            _ => {}
+        }
     }
 
     /// Show what changed between the working copy and the last recorded state.
