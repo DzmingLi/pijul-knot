@@ -162,8 +162,9 @@ struct ForkInput { fork_node_id: String }
 
 async fn fork_repo(State(state): State<AppState>, Path(node_id): Path<String>, Json(input): Json<ForkInput>) -> R<(StatusCode, Json<serde_json::Value>)> {
     let pijul = state.pijul.clone();
+    let fork_id = input.fork_node_id.clone();
     tokio::task::spawn_blocking(move || pijul.fork(&node_id, &input.fork_node_id)).await.map_err(|e| anyhow::anyhow!(e))??;
-    Ok((StatusCode::CREATED, Json(serde_json::json!({ "fork_node_id": input.fork_node_id }))))
+    Ok((StatusCode::CREATED, Json(serde_json::json!({ "fork_node_id": fork_id }))))
 }
 
 #[derive(serde::Deserialize)]
