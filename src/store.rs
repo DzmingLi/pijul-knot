@@ -10,7 +10,7 @@ use pijul_core::{
 };
 
 /// A single line-level difference between the working copy and the last recorded state.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DiffHunk {
     /// The file path relative to the repo root.
     pub path: String,
@@ -21,7 +21,7 @@ pub struct DiffHunk {
 }
 
 /// Summary of differences between the working copy and the last recorded state.
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct DiffResult {
     /// Per-file hunks showing what changed.
     pub hunks: Vec<DiffHunk>,
@@ -39,7 +39,7 @@ pub struct TrackedFile {
 }
 
 /// Result of comparing two channels' change sets.
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ChannelDiffResult {
     /// Changes present in channel A but not in channel B.
     pub only_in_a: Vec<String>,

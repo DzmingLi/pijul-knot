@@ -1,22 +1,27 @@
 //! pijul-knot: Pijul repository hosting as a library.
 //!
-//! Contains `PijulStore` for direct pijul-core operations and an Axum HTTP
-//! router to expose them as a REST API. Embed in your app or run standalone.
+//! - `PijulStore`: direct local pijul-core operations
+//! - `KnotClient`: HTTP client for a remote pijul-knot server
+//! - `router()`: Axum HTTP router exposing PijulStore as REST API
 //!
 //! ```rust,ignore
-//! use std::sync::Arc;
-//!
+//! // Embed locally:
 //! let state = pijul_knot::KnotState {
 //!     pijul: Arc::new(pijul_knot::PijulStore::new("./data")),
 //! };
-//! let app = axum::Router::new()
-//!     .nest("/knot", pijul_knot::router(state));
+//! let app = axum::Router::new().nest("/knot", pijul_knot::router(state));
+//!
+//! // Or connect to remote knot:
+//! let client = pijul_knot::KnotClient::new("https://knot.example.com");
+//! let files = client.list_files("my-repo").await?;
 //! ```
 
 pub mod store;
+pub mod client;
 mod routes;
 
 pub use store::{PijulStore, ChannelDiffResult, DiffHunk, DiffResult, TrackedFile};
+pub use client::KnotClient;
 pub use routes::router;
 
 /// Shared state for the knot router.
