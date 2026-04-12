@@ -199,6 +199,9 @@ where
     let node = resolver.resolve_node_id(&id).await?;
     let repo = pijul.repo_path(&node);
     let full = repo.join(&input.path);
+    if full.is_dir() {
+        return Err(PadError::BadRequest(format!("path is a directory: {}", input.path)));
+    }
     if let Some(p) = full.parent() { let _ = std::fs::create_dir_all(p); }
     std::fs::write(&full, &input.content).map_err(|e| PadError::Internal(e.to_string()))?;
 

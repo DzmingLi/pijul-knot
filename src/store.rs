@@ -162,33 +162,6 @@ impl PijulStore {
         // Apply root change if needed (first record)
         txn.write().apply_root_change_if_needed(&repo.changes, &channel, rand::rng())?;
 
-        // Clean up stale tree entries that no longer match the filesystem.
-        // After unrecord + output_repository, the working copy tree may retain
-        // entries (with wrong type metadata) that cause EISDIR when recording.
-        {
-            let t = txn.read();
-            let stale: Vec<String> = t.iter_working_copy()
-                .filter_map(|e| e.ok())
-                .filter_map(|(_inode, name, is_dir)| {
-                    let full = path.join(&name);
-                    if !full.exists() || full.is_dir() != is_dir {
-                        Some(name)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            drop(t);
-            if !stale.is_empty() {
-                let mut t = txn.write();
-                for name in &stale {
-                    if let Err(e) = t.remove_file(name) {
-                        tracing::debug!("could not remove stale tree entry {name}: {e}");
-                    }
-                }
-            }
-        }
-
         // Add all untracked files in working copy (recursive)
         {
             let mut t = txn.write();
