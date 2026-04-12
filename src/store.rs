@@ -162,21 +162,26 @@ impl PijulStore {
         // Apply root change if needed (first record)
         txn.write().apply_root_change_if_needed(&repo.changes, &channel, rand::rng())?;
 
-        // Add all untracked files in working copy
+        // Add all untracked files in working copy (recursive)
         {
             let mut t = txn.write();
-            for entry in std::fs::read_dir(&path)? {
-                let entry = entry?;
-                let name = entry.file_name();
-                let name_str = name.to_string_lossy();
-                // Skip .pijul directory, .ignore, and html cache
-                if name_str.starts_with('.') || name_str == "content.html" {
-                    continue;
-                }
-                let rel_path = name_str.to_string();
-                if !t.is_tracked(&rel_path).unwrap_or(false) {
+            let mut dirs = vec![("".to_string(), path.to_path_buf())];
+            while let Some((prefix, dir)) = dirs.pop() {
+                for entry in std::fs::read_dir(&dir)? {
+                    let entry = entry?;
+                    let name = entry.file_name();
+                    let name_str = name.to_string_lossy();
+                    if name_str.starts_with('.') || name_str == "content.html" {
+                        continue;
+                    }
+                    let rel_path = if prefix.is_empty() { name_str.to_string() } else { format!("{prefix}/{name_str}") };
                     let is_dir = entry.file_type()?.is_dir();
-                    t.add(&rel_path, is_dir, 0)?;
+                    if !t.is_tracked(&rel_path).unwrap_or(false) {
+                        t.add(&rel_path, is_dir, 0)?;
+                    }
+                    if is_dir {
+                        dirs.push((rel_path, entry.path()));
+                    }
                 }
             }
         }
