@@ -31,11 +31,19 @@ pub trait PadProjectResolver: Send + Sync + 'static {
     async fn get_owner_did(&self, project_id: &str) -> Result<String, PadError>;
     /// Called after a successful write+record to update timestamps etc.
     async fn on_record(&self, project_id: &str) { let _ = project_id; }
+    /// Get a Bearer token for pushing to the remote knot.
+    /// `session_token` is the user's session cookie/token for looking up OAuth credentials.
+    async fn get_push_token(&self, project_id: &str, session_token: &str) -> Option<String> {
+        let _ = (project_id, session_token);
+        None
+    }
 }
 
 /// User identity. The consuming app extracts this from its own auth system.
 pub trait PadUser: Send + Sync {
     fn did(&self) -> &str;
+    /// Session token for obtaining service auth tokens (e.g. for pushing to knot).
+    fn session_token(&self) -> Option<&str> { None }
 }
 
 // ── Error ──────────────────────────────────────────────────────────────────
@@ -220,7 +228,11 @@ where
 
         if let Some(knot) = resolver.get_knot_url(&id).await {
             let remote = format!("{}/{}/{}", knot, user.did(), node);
-            if let Err(e) = pijul.push(&node, &remote, None, None) {
+            let token = match user.session_token() {
+                Some(st) => resolver.get_push_token(&id, st).await,
+                None => None,
+            };
+            if let Err(e) = pijul.push(&node, &remote, None, token.as_deref()) {
                 tracing::warn!("auto-push failed: {e}");
             }
         }
@@ -271,7 +283,11 @@ where
     let knot = resolver.get_knot_url(&id).await
         .ok_or(PadError::BadRequest("no knot configured".into()))?;
     let remote = format!("{}/{}/{}", knot, user.did(), node);
-    let pushed = pijul.push(&node, &remote, None, None)
+    let token = match user.session_token() {
+        Some(st) => resolver.get_push_token(&id, st).await,
+        None => None,
+    };
+    let pushed = pijul.push(&node, &remote, None, token.as_deref())
         .map_err(|e| PadError::Internal(format!("push: {e}")))?;
     Ok(Json(serde_json::json!({ "pushed": pushed.len() })))
 }
