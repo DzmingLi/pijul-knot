@@ -171,7 +171,7 @@ impl PijulStore {
                     let entry = entry?;
                     let name = entry.file_name();
                     let name_str = name.to_string_lossy();
-                    if name_str.starts_with('.') || name_str == "content.html" {
+                    if name_str.starts_with('.') || name_str == "content.html" || name_str == "cache" {
                         continue;
                     }
                     let rel_path = if prefix.is_empty() { name_str.to_string() } else { format!("{prefix}/{name_str}") };

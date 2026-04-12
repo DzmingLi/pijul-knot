@@ -139,16 +139,15 @@ where
     let node = resolver.resolve_node_id(&id).await?;
     let tracked = pijul.list_files(&node).map_err(|e| PadError::Internal(e.to_string()))?;
 
-    fn is_hidden(path: &str) -> bool {
-        let name = path.rsplit('/').next().unwrap_or(path);
-        name.starts_with('.') || matches!(name, "content.html" | "cache" | "meta.json")
+    fn is_hidden(name: &str) -> bool {
+        name.starts_with('.') || matches!(name, "content.html" | "cache")
     }
 
     let mut paths: std::collections::HashSet<String> = tracked.iter()
-        .filter(|f| !is_hidden(&f.path))
+        .filter(|f| !is_hidden(f.path.rsplit('/').next().unwrap_or(&f.path)))
         .map(|f| f.path.clone()).collect();
     let mut out: Vec<_> = tracked.iter()
-        .filter(|f| !is_hidden(&f.path))
+        .filter(|f| !is_hidden(f.path.rsplit('/').next().unwrap_or(&f.path)))
         .map(|f| serde_json::json!({ "path": f.path, "is_dir": f.is_dir })).collect();
 
     let repo = pijul.repo_path(&node);
