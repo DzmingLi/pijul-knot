@@ -1098,10 +1098,9 @@ impl PijulStore {
 
     // --- Series repo methods ---
 
-    /// Initialize a series repo with chapters/ and cache/ directories.
+    /// Initialize a series repo with a cache/ directory.
     pub fn init_series_repo(&self, node_id: &str) -> anyhow::Result<PathBuf> {
         let path = self.repo_path(node_id);
-        std::fs::create_dir_all(path.join("chapters"))?;
         std::fs::create_dir_all(path.join("cache"))?;
 
         let dot_dir = path.join(pijul_core::DOT_DIR);
@@ -1127,7 +1126,7 @@ impl PijulStore {
         Ok(path)
     }
 
-    /// Write a chapter file into a series repo.
+    /// Write a chapter file into a series repo (flat, at repo root).
     pub fn write_chapter(
         &self,
         series_node_id: &str,
@@ -1135,14 +1134,13 @@ impl PijulStore {
         content: &str,
         ext: &str,
     ) -> anyhow::Result<()> {
-        let chapters_dir = self.repo_path(series_node_id).join("chapters");
-        std::fs::create_dir_all(&chapters_dir)?;
+        let repo = self.repo_path(series_node_id);
         let filename = format!("{chapter_id}.{ext}");
-        std::fs::write(chapters_dir.join(&filename), content)?;
+        std::fs::write(repo.join(&filename), content)?;
         Ok(())
     }
 
-    /// Read a chapter source from a series repo.
+    /// Read a chapter source from a series repo (flat, at repo root).
     pub fn read_chapter(
         &self,
         series_node_id: &str,
@@ -1150,7 +1148,7 @@ impl PijulStore {
         ext: &str,
     ) -> anyhow::Result<String> {
         let filename = format!("{chapter_id}.{ext}");
-        let path = self.repo_path(series_node_id).join("chapters").join(&filename);
+        let path = self.repo_path(series_node_id).join(&filename);
         Ok(std::fs::read_to_string(&path)?)
     }
 
