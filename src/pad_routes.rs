@@ -138,15 +138,25 @@ where
 {
     let node = resolver.resolve_node_id(&id).await?;
     let tracked = pijul.list_files(&node).map_err(|e| PadError::Internal(e.to_string()))?;
-    let mut paths: std::collections::HashSet<String> = tracked.iter().map(|f| f.path.clone()).collect();
-    let mut out: Vec<_> = tracked.iter().map(|f| serde_json::json!({ "path": f.path, "is_dir": f.is_dir })).collect();
+
+    fn is_hidden(path: &str) -> bool {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        name.starts_with('.') || matches!(name, "content.html" | "cache" | "meta.json")
+    }
+
+    let mut paths: std::collections::HashSet<String> = tracked.iter()
+        .filter(|f| !is_hidden(&f.path))
+        .map(|f| f.path.clone()).collect();
+    let mut out: Vec<_> = tracked.iter()
+        .filter(|f| !is_hidden(&f.path))
+        .map(|f| serde_json::json!({ "path": f.path, "is_dir": f.is_dir })).collect();
 
     let repo = pijul.repo_path(&node);
     fn scan_dir(base: &std::path::Path, prefix: &str, paths: &mut std::collections::HashSet<String>, out: &mut Vec<serde_json::Value>) {
         let Ok(entries) = std::fs::read_dir(base) else { return };
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') || name == "content.html" || name == "cache" { continue; }
+            if is_hidden(&name) { continue; }
             let rel = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
             let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
             if !paths.contains(&rel) {
