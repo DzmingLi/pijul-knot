@@ -406,27 +406,21 @@ impl PijulStore {
         Ok(hashes)
     }
 
-    /// Extract author from a change's unhashed metadata.
-    fn extract_author(unhashed: Option<&serde_json::Value>) -> Option<String> {
-        tracing::info!("extract_author unhashed={:?}", unhashed);
-        let u = unhashed?;
-        if let Some(arr) = u.get("authors").and_then(|a| a.as_array()) {
-            if let Some(first) = arr.first() {
-                if let Some(did) = first.get("did").and_then(|v| v.as_str()) {
-                    return Some(did.to_string());
-                }
-                if let Some(key) = first.get("key").and_then(|v| v.as_str()) {
-                    return Some(format!("key:{}", &key[..key.len().min(12)]));
-                }
-                if let Some(s) = first.as_str() {
-                    return Some(s.to_string());
-                }
-            }
+    /// Extract author from a change's hashed header authors list.
+    /// Each Author is a BTreeMap<String, String> with keys like "did", "key", "name".
+    fn extract_author(authors: &[pijul_core::change::Author]) -> Option<String> {
+        let first = authors.first()?;
+        // Try "did" first, then "key", then any available value
+        if let Some(did) = first.0.get("did") {
+            return Some(did.clone());
         }
-        u.get("identity")
-            .and_then(|i| i.get("did").or_else(|| i.get("login")))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
+        if let Some(key) = first.0.get("key") {
+            return Some(format!("key:{}", &key[..key.len().min(12)]));
+        }
+        if let Some(name) = first.0.get("name") {
+            return Some(name.clone());
+        }
+        first.0.values().next().map(|v| v.clone())
     }
 
     /// Get details of a specific change (message, author).
@@ -438,7 +432,7 @@ impl PijulStore {
         let change = repo.changes.get_change(&hash)?;
 
         let message = change.hashed.header.message.clone();
-        let author = Self::extract_author(change.unhashed.as_ref());
+        let author = Self::extract_author(&change.hashed.header.authors);
 
         Ok(ChangeInfo { hash: change_hash.to_string(), message, author })
     }
@@ -465,7 +459,7 @@ impl PijulStore {
         let change = repo.changes.get_change(&hash)?;
 
         let message = change.hashed.header.message.clone();
-        let author = Self::extract_author(change.unhashed.as_ref());
+        let author = Self::extract_author(&change.hashed.header.authors);
 
         let contents = &change.contents;
         let mut file_map: std::collections::BTreeMap<String, Vec<ChangeLine>> = std::collections::BTreeMap::new();
