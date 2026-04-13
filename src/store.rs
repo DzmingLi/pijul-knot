@@ -408,7 +408,7 @@ impl PijulStore {
 
     /// Extract author from a change's unhashed metadata.
     fn extract_author(unhashed: Option<&serde_json::Value>) -> Option<String> {
-        tracing::debug!("extract_author unhashed={:?}", unhashed);
+        tracing::info!("extract_author unhashed={:?}", unhashed);
         let u = unhashed?;
         if let Some(arr) = u.get("authors").and_then(|a| a.as_array()) {
             if let Some(first) = arr.first() {
