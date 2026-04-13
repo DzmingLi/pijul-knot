@@ -1231,7 +1231,7 @@ impl PijulStore {
             }
 
             let change_bytes = std::fs::read(&change_path)?;
-            let apply_url = format!("{pijul_url}?apply={hash_str}&to_channel={ch}");
+            let apply_url = encode_url_path_colons(&format!("{pijul_url}?apply={hash_str}&to_channel={ch}"));
 
             let mut req = ureq::post(&apply_url)
                 .header("Content-Type", "application/octet-stream");
@@ -1283,7 +1283,7 @@ impl PijulStore {
 
         for hash_str in &to_pull {
             // Download change file
-            let change_url = format!("{pijul_url}?change={hash_str}");
+            let change_url = encode_url_path_colons(&format!("{pijul_url}?change={hash_str}"));
             let resp = ureq::get(&change_url).call()
                 .map_err(|e| anyhow::anyhow!("fetch change {hash_str}: {e}"))?;
 
@@ -1315,6 +1315,8 @@ impl PijulStore {
     /// Fetch the changelist from a remote knot (Tangled HTTP protocol).
     fn fetch_remote_changelist(&self, pijul_url: &str, channel: &str) -> anyhow::Result<Vec<String>> {
         let url = format!("{pijul_url}?changelist=0&channel={channel}");
+        // Encode colons in the path (e.g. did:web:) for ureq URL parser
+        let url = encode_url_path_colons(&url);
         let resp = ureq::get(&url).call()
             .map_err(|e| anyhow::anyhow!("fetch changelist: {e}"))?;
         let body = resp.into_body().read_to_string()
@@ -1332,6 +1334,31 @@ impl PijulStore {
         Ok(hashes)
     }
 
+}
+
+/// Encode colons in the URL path segment (but not in scheme or query).
+/// ureq 3.x is strict about colons in paths.
+fn encode_url_path_colons(url: &str) -> String {
+    if let Some(rest) = url.strip_prefix("https://") {
+        if let Some(qpos) = rest.find('?') {
+            let (path_part, query) = rest.split_at(qpos);
+            format!("https://{}{}", path_part.replace(':', "%3A"), query)
+        } else {
+            format!("https://{}", rest.replace(':', "%3A"))
+        }
+    } else if let Some(rest) = url.strip_prefix("http://") {
+        if let Some(qpos) = rest.find('?') {
+            let (path_part, query) = rest.split_at(qpos);
+            format!("http://{}{}", path_part.replace(':', "%3A"), query)
+        } else {
+            format!("http://{}", rest.replace(':', "%3A"))
+        }
+    } else {
+        url.to_string()
+    }
+}
+
+impl PijulStore {
     fn open_repo(&self, path: &Path) -> anyhow::Result<RepoHandle> {
         let dot_dir = path.join(pijul_core::DOT_DIR);
         let pristine_dir = dot_dir.join("pristine");
