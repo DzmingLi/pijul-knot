@@ -406,6 +406,28 @@ impl PijulStore {
         Ok(hashes)
     }
 
+    /// Extract author from a change's unhashed metadata.
+    fn extract_author(unhashed: Option<&serde_json::Value>) -> Option<String> {
+        let u = unhashed?;
+        if let Some(arr) = u.get("authors").and_then(|a| a.as_array()) {
+            if let Some(first) = arr.first() {
+                if let Some(did) = first.get("did").and_then(|v| v.as_str()) {
+                    return Some(did.to_string());
+                }
+                if let Some(key) = first.get("key").and_then(|v| v.as_str()) {
+                    return Some(format!("key:{}", &key[..key.len().min(12)]));
+                }
+                if let Some(s) = first.as_str() {
+                    return Some(s.to_string());
+                }
+            }
+        }
+        u.get("identity")
+            .and_then(|i| i.get("did").or_else(|| i.get("login")))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    }
+
     /// Get details of a specific change (message, author).
     pub fn get_change_info(&self, node_id: &str, change_hash: &str) -> anyhow::Result<ChangeInfo> {
         let hash = pijul_core::Hash::from_base32(change_hash.as_bytes())
@@ -415,11 +437,7 @@ impl PijulStore {
         let change = repo.changes.get_change(&hash)?;
 
         let message = change.hashed.header.message.clone();
-        let author = change.unhashed.as_ref()
-            .and_then(|u| u.get("identity"))
-            .and_then(|i| i.get("did"))
-            .and_then(|d| d.as_str())
-            .map(|s| s.to_string());
+        let author = Self::extract_author(change.unhashed.as_ref());
 
         Ok(ChangeInfo { hash: change_hash.to_string(), message, author })
     }
@@ -446,18 +464,7 @@ impl PijulStore {
         let change = repo.changes.get_change(&hash)?;
 
         let message = change.hashed.header.message.clone();
-        // Try multiple paths for author: identity.did, identity.login, or authors list
-        let author = change.unhashed.as_ref().and_then(|u| {
-            u.get("identity")
-                .and_then(|i| i.get("did").or_else(|| i.get("login")))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .or_else(|| {
-                    u.get("authors").and_then(|a| a.as_array()).and_then(|arr| {
-                        arr.first().and_then(|v| v.as_str()).map(|s| s.to_string())
-                    })
-                })
-        });
+        let author = Self::extract_author(change.unhashed.as_ref());
 
         let contents = &change.contents;
         let mut file_map: std::collections::BTreeMap<String, Vec<ChangeLine>> = std::collections::BTreeMap::new();
