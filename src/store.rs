@@ -62,13 +62,20 @@ pub struct ChangeLine {
     pub content: String,
 }
 
-/// Full details of a change including content hunks.
+/// A group of change lines belonging to the same file.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FileHunk {
+    pub path: String,
+    pub lines: Vec<ChangeLine>,
+}
+
+/// Full details of a change including content hunks grouped by file.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChangeDetail {
     pub hash: String,
     pub message: String,
     pub author: Option<String>,
-    pub lines: Vec<ChangeLine>,
+    pub files: Vec<FileHunk>,
 }
 
 /// Wrapper around pijul-core for managing article repositories.
@@ -439,66 +446,82 @@ impl PijulStore {
         let change = repo.changes.get_change(&hash)?;
 
         let message = change.hashed.header.message.clone();
-        let author = change.unhashed.as_ref()
-            .and_then(|u| u.get("identity"))
-            .and_then(|i| i.get("did"))
-            .and_then(|d| d.as_str())
-            .map(|s| s.to_string());
+        // Try multiple paths for author: identity.did, identity.login, or authors list
+        let author = change.unhashed.as_ref().and_then(|u| {
+            u.get("identity")
+                .and_then(|i| i.get("did").or_else(|| i.get("login")))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    u.get("authors").and_then(|a| a.as_array()).and_then(|arr| {
+                        arr.first().and_then(|v| v.as_str()).map(|s| s.to_string())
+                    })
+                })
+        });
 
         let contents = &change.contents;
-        let mut lines = Vec::new();
+        let mut file_map: std::collections::BTreeMap<String, Vec<ChangeLine>> = std::collections::BTreeMap::new();
 
-        // Extract content from each hunk's atoms
         for hunk in &change.hashed.changes {
-            self.extract_hunk_lines(hunk, contents, &mut lines);
+            self.extract_hunk_lines_grouped(hunk, contents, &mut file_map);
         }
 
-        Ok(ChangeDetail { hash: change_hash.to_string(), message, author, lines })
+        let files = file_map.into_iter().map(|(path, lines)| FileHunk { path, lines }).collect();
+        Ok(ChangeDetail { hash: change_hash.to_string(), message, author, files })
     }
 
-    /// Extract added/deleted lines from a hunk.
-    fn extract_hunk_lines(&self, hunk: &pijul_core::change::Hunk<Option<pijul_core::Hash>, pijul_core::change::Local>, contents: &[u8], lines: &mut Vec<ChangeLine>) {
+    /// Extract added/deleted lines from a hunk, grouped by file path.
+    fn extract_hunk_lines_grouped(
+        &self,
+        hunk: &pijul_core::change::Hunk<Option<pijul_core::Hash>, pijul_core::change::Local>,
+        contents: &[u8],
+        file_map: &mut std::collections::BTreeMap<String, Vec<ChangeLine>>,
+    ) {
         use pijul_core::change::{Hunk, Atom};
 
-        match hunk {
-            Hunk::FileAdd { contents: Some(atom), .. } |
-            Hunk::Edit { change: atom, .. } |
-            Hunk::FileUndel { contents: Some(atom), .. } => {
-                if let Atom::NewVertex(nv) = atom {
-                    let start: usize = nv.start.0.into();
-                    let end: usize = nv.end.0.into();
-                    if end > start && end <= contents.len() {
-                        let text = String::from_utf8_lossy(&contents[start..end]);
-                        for line in text.lines() {
-                            if !line.is_empty() {
-                                lines.push(ChangeLine { kind: "add".into(), content: line.to_string() });
-                            }
+        fn extract_lines(atom: &Atom<Option<pijul_core::Hash>>, contents: &[u8], kind: &str) -> Vec<ChangeLine> {
+            let mut lines = Vec::new();
+            if let Atom::NewVertex(nv) = atom {
+                let start: usize = nv.start.0.into();
+                let end: usize = nv.end.0.into();
+                if end > start && end <= contents.len() {
+                    let text = String::from_utf8_lossy(&contents[start..end]);
+                    for line in text.lines() {
+                        if !line.is_empty() {
+                            lines.push(ChangeLine { kind: kind.into(), content: line.to_string() });
                         }
                     }
                 }
             }
-            Hunk::Replacement { change, replacement, .. } => {
-                // Deletions from change (EdgeMap = delete edges)
-                if let Atom::EdgeMap(_) = change {
-                    // EdgeMap represents deletions but content isn't easily extractable
-                    // We'd need the pristine state to know what was deleted
-                }
-                // Additions from replacement
-                if let Atom::NewVertex(nv) = replacement {
-                    let start: usize = nv.start.0.into();
-                    let end: usize = nv.end.0.into();
-                    if end > start && end <= contents.len() {
-                        let text = String::from_utf8_lossy(&contents[start..end]);
-                        for line in text.lines() {
-                            if !line.is_empty() {
-                                lines.push(ChangeLine { kind: "add".into(), content: line.to_string() });
-                            }
-                        }
-                    }
-                }
+            lines
+        }
+
+        match hunk {
+            Hunk::FileAdd { contents: Some(atom), path, .. } => {
+                let lines = extract_lines(atom, contents, "add");
+                file_map.entry(path.clone()).or_default().extend(lines);
+            }
+            Hunk::Edit { change: atom, local, .. } => {
+                let lines = extract_lines(atom, contents, "add");
+                file_map.entry(local.path.clone()).or_default().extend(lines);
+            }
+            Hunk::FileUndel { contents: Some(atom), path, .. } => {
+                let lines = extract_lines(atom, contents, "add");
+                file_map.entry(path.clone()).or_default().extend(lines);
+            }
+            Hunk::Replacement { replacement, local, .. } => {
+                let lines = extract_lines(replacement, contents, "add");
+                file_map.entry(local.path.clone()).or_default().extend(lines);
             }
             Hunk::FileDel { path, .. } => {
-                lines.push(ChangeLine { kind: "del".into(), content: format!("(deleted file: {path})") });
+                file_map.entry(path.clone()).or_default().push(
+                    ChangeLine { kind: "del".into(), content: format!("(file deleted)") }
+                );
+            }
+            Hunk::FileMove { path, .. } => {
+                file_map.entry(path.clone()).or_default().push(
+                    ChangeLine { kind: "add".into(), content: format!("(file moved)") }
+                );
             }
             _ => {}
         }
@@ -1336,26 +1359,30 @@ impl PijulStore {
 
 }
 
-/// Encode colons in the URL path segment (but not in scheme or query).
+/// Encode colons in the URL path segment (but not in scheme, host, or query).
 /// ureq 3.x is strict about colons in paths.
 fn encode_url_path_colons(url: &str) -> String {
-    if let Some(rest) = url.strip_prefix("https://") {
-        if let Some(qpos) = rest.find('?') {
-            let (path_part, query) = rest.split_at(qpos);
-            format!("https://{}{}", path_part.replace(':', "%3A"), query)
-        } else {
-            format!("https://{}", rest.replace(':', "%3A"))
-        }
-    } else if let Some(rest) = url.strip_prefix("http://") {
-        if let Some(qpos) = rest.find('?') {
-            let (path_part, query) = rest.split_at(qpos);
-            format!("http://{}{}", path_part.replace(':', "%3A"), query)
-        } else {
-            format!("http://{}", rest.replace(':', "%3A"))
-        }
+    let (scheme, rest) = if let Some(r) = url.strip_prefix("https://") {
+        ("https://", r)
+    } else if let Some(r) = url.strip_prefix("http://") {
+        ("http://", r)
     } else {
-        url.to_string()
-    }
+        return url.to_string();
+    };
+
+    // Split off query string
+    let (host_and_path, query) = match rest.find('?') {
+        Some(pos) => (&rest[..pos], &rest[pos..]),
+        None => (rest, ""),
+    };
+
+    // Split host from path at first '/'
+    let (host, path) = match host_and_path.find('/') {
+        Some(pos) => (&host_and_path[..pos], &host_and_path[pos..]),
+        None => (host_and_path, ""),
+    };
+
+    format!("{}{}{}{}", scheme, host, path.replace(':', "%3A"), query)
 }
 
 impl PijulStore {

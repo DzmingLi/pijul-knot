@@ -21,7 +21,7 @@ pub mod client;
 mod routes;
 pub mod pad_routes;
 
-pub use store::{PijulStore, ChangeInfo, ChangeDetail, ChangeLine, ChannelDiffResult, DiffHunk, DiffResult, TrackedFile};
+pub use store::{PijulStore, ChangeInfo, ChangeDetail, ChangeLine, FileHunk, ChannelDiffResult, DiffHunk, DiffResult, TrackedFile};
 pub use client::KnotClient;
 pub use routes::router;
 pub use pad_routes::{pad_router, PadProjectResolver, PadUser, PadError};
