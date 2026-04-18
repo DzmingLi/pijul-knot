@@ -263,6 +263,7 @@ where
     if full.exists() {
         std::fs::remove_file(&full).map_err(|e| PadError::Internal(e.to_string()))?;
     }
+    pijul.remove_file(&node, &q.path).map_err(|e| PadError::Internal(e.to_string()))?;
     Ok(StatusCode::NO_CONTENT)
 }
 

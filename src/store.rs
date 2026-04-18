@@ -844,6 +844,33 @@ impl PijulStore {
         Ok(content)
     }
 
+    /// Untrack a file from the repository's working tree.
+    ///
+    /// This removes the inode/path mapping so the file no longer appears in
+    /// `list_files`. Does NOT delete the file from disk — callers must do that
+    /// separately. The deletion will be picked up as a `FileDel` change on the
+    /// next `record` (because pijul's `delete_obsolete_children` walks the
+    /// channel graph and any path with no inode mapping is treated as deleted).
+    ///
+    /// Silently returns `Ok(())` if the path was never tracked (e.g. created
+    /// in the working copy but never recorded).
+    pub fn remove_file(&self, node_id: &str, path: &str) -> anyhow::Result<()> {
+        let lock_ref = self.lock_repo(node_id);
+        let _guard = lock_ref.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {e}"))?;
+
+        let repo_path = self.repo_path(node_id);
+        let repo = self.open_repo(&repo_path)?;
+        let mut txn = repo.pristine.mut_txn_begin()?;
+
+        if !txn.is_tracked(path).unwrap_or(false) {
+            return Ok(());
+        }
+        txn.remove_file(path).map_err(|e| anyhow::anyhow!("remove_file {path}: {e}"))?;
+        txn.commit()?;
+        tracing::info!("untracked {path} in {node_id}");
+        Ok(())
+    }
+
     /// List all tracked files in a repository.
     ///
     /// Returns a list of `TrackedFile` entries with their relative paths
